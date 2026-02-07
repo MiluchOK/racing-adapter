@@ -1,0 +1,32 @@
+{
+  "device": {
+    "vendor_id": 3767,
+    "product_id": 3591,
+    "name": "FANATEC WHEEL(PS5 / PS4 MODE)"
+  },
+  "steering": {
+    "byte": 43,
+    "is_16bit": true,
+    "min": 2091,
+    "max": 60656
+  },
+  "throttle": {
+    "byte": 46,
+    "is_16bit": false,
+    "min": 255,
+    "max": 111
+  },
+  "brake": {
+    "byte": 47,
+    "is_16bit": true,
+    "min": 65535,
+    "max": 15666
+  },
+  "clutch": {
+    "byte": 49,
+    "is_16bit": true,
+    "min": 65535,
+    "max": 60972
+  },
+  "buttons": []
+}

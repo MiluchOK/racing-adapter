@@ -1,0 +1,21 @@
+#!/bin/bash
+set -e
+
+FQBN="arduino:renesas_uno:unor4wifi"
+SKETCH_DIR="$(dirname "$0")"
+
+# Auto-detect port
+PORT=$(arduino-cli board list | grep -i "arduino" | awk '{print $1}' | head -1)
+
+if [ -z "$PORT" ]; then
+  echo "Error: No Arduino board found. Is it connected?"
+  exit 1
+fi
+
+echo "Compiling..."
+arduino-cli compile --fqbn "$FQBN" "$SKETCH_DIR"
+
+echo "Uploading to $PORT..."
+arduino-cli upload -p "$PORT" --fqbn "$FQBN" "$SKETCH_DIR"
+
+echo "Done!"
