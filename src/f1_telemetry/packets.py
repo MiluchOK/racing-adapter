@@ -557,3 +557,184 @@ class CarSetup:
     front_right_tyre_pressure: float
     ballast: int
     fuel_load: float
+    engine_braking: int = 0          # Engine braking %
+
+
+# =============================================================================
+# EVENT DATA
+# =============================================================================
+
+@dataclass
+class EventData:
+    """Event packet - notable in-game events."""
+    event_code: str                  # 4-character event code
+    vehicle_index: int = 0           # Car index involved (if applicable)
+    lap_time: float = 0.0            # Fastest lap time (FTLP)
+    speed: float = 0.0               # Speed trap speed (SPTP)
+    penalty_type: int = 0            # Penalty type (PNAL)
+    infringement_type: int = 0       # Infringement type (PNAL)
+    other_vehicle_index: int = 0     # Other car involved (PNAL)
+    time: int = 0                    # Penalty time seconds (PNAL)
+    lap_num: int = 0                 # Lap number (PNAL)
+    places_gained: int = 0           # Places gained (PNAL)
+
+    # Event code constants
+    SESSION_STARTED = "SSTA"
+    SESSION_ENDED = "SEND"
+    FASTEST_LAP = "FTLP"
+    RETIREMENT = "RTMT"
+    DRS_ENABLED = "DRSE"
+    DRS_DISABLED = "DRSD"
+    TEAM_MATE_IN_PITS = "TMPT"
+    CHEQUERED_FLAG = "CHQF"
+    RACE_WINNER = "RCWN"
+    PENALTY_ISSUED = "PNAL"
+    SPEED_TRAP = "SPTP"
+    START_LIGHTS = "STLG"
+    LIGHTS_OUT = "LGOT"
+    DRIVE_THROUGH_SERVED = "DTSV"
+    STOP_GO_SERVED = "SGSV"
+    FLASHBACK = "FLBK"
+    BUTTON_STATUS = "BUTN"
+    RED_FLAG = "RDFL"
+    OVERTAKE = "OVTK"
+
+
+# =============================================================================
+# FINAL CLASSIFICATION
+# =============================================================================
+
+@dataclass
+class FinalClassification:
+    """End-of-session classification for a driver."""
+    position: int                    # Finishing position
+    num_laps: int                    # Laps completed
+    grid_position: int               # Starting grid position
+    points: int                      # Points scored
+    num_pit_stops: int
+    result_status: int               # 0=invalid, 1=inactive, 2=active, 3=finished, 4=DNF, 5=DSQ, 6=not classified
+    best_lap_time: float             # Seconds
+    total_race_time: float           # Seconds (double)
+    penalties_time: int              # Seconds
+    num_penalties: int
+    num_tyre_stints: int
+    tyre_stints_actual: list         # Actual compounds per stint
+    tyre_stints_visual: list         # Visual compounds per stint
+
+
+# =============================================================================
+# LOBBY INFO
+# =============================================================================
+
+@dataclass
+class LobbyInfo:
+    """Multiplayer lobby player information."""
+    ai_controlled: bool
+    team_id: int
+    nationality: int
+    name: str
+    ready_status: int                # 0=not ready, 1=ready, 2=spectating
+    tech_level: int = 0
+
+
+# =============================================================================
+# SESSION HISTORY
+# =============================================================================
+
+@dataclass
+class LapHistoryItem:
+    """Single lap history entry."""
+    lap_time_ms: int
+    sector1_time_ms: int
+    sector2_time_ms: int
+    sector3_time_ms: int
+    lap_valid: bool
+    sector1_valid: bool
+    sector2_valid: bool
+    sector3_valid: bool
+
+    @property
+    def lap_time(self) -> str:
+        """Format lap time as M:SS.mmm"""
+        if self.lap_time_ms == 0:
+            return "--:--.---"
+        mins = self.lap_time_ms // 60000
+        secs = (self.lap_time_ms % 60000) / 1000
+        return f"{mins}:{secs:06.3f}"
+
+
+@dataclass
+class SessionHistory:
+    """Lap and sector time history for a car."""
+    car_index: int
+    num_laps: int
+    num_tyre_stints: int
+    best_lap_time_lap_num: int
+    best_sector1_lap_num: int
+    best_sector2_lap_num: int
+    best_sector3_lap_num: int
+    lap_history: list                # List of LapHistoryItem
+
+
+# =============================================================================
+# TYRE SET DATA
+# =============================================================================
+
+@dataclass
+class TyreSetInfo:
+    """Information about a single tyre set."""
+    actual_compound: int
+    visual_compound: int
+    wear: int                        # Percentage worn
+    available: bool
+    recommended_session: int
+    life_span: int
+    usable_life: int
+    lap_delta_time: int              # ms delta vs fitted set
+    fitted: bool
+
+
+@dataclass
+class TyreSetData:
+    """Available tyre sets for a car."""
+    car_index: int
+    tyre_sets: list                  # List of TyreSetInfo
+    fitted_index: int                # Index of currently fitted set
+
+
+# =============================================================================
+# TIME TRIAL
+# =============================================================================
+
+@dataclass
+class TimeTrialDataSet:
+    """Time trial data for a single entry (player/personal best/rival)."""
+    car_index: int
+    team_id: int
+    lap_time_ms: int
+    sector1_time_ms: int
+    sector2_time_ms: int
+    sector3_time_ms: int
+    traction_control: int
+    gearbox_assist: int
+    anti_lock_brakes: bool
+    equal_car_performance: bool
+    custom_setup: bool
+    valid: bool
+
+    @property
+    def lap_time(self) -> str:
+        """Format lap time as M:SS.mmm"""
+        if self.lap_time_ms == 0:
+            return "--:--.---"
+        mins = self.lap_time_ms // 60000
+        secs = (self.lap_time_ms % 60000) / 1000
+        return f"{mins}:{secs:06.3f}"
+
+
+@dataclass
+class TimeTrial:
+    """Time trial packet data."""
+    player_session_best: TimeTrialDataSet
+    personal_best: TimeTrialDataSet
+    rival: TimeTrialDataSet

@@ -28,6 +28,14 @@ public:
     hasData = true;
   }
 
+  // Set steering value directly (normalised 0.0 - 1.0)
+  void setSteer(float value) {
+    steer = value;
+    if (steer < 0.0f) steer = 0.0f;
+    if (steer > 1.0f) steer = 1.0f;
+    hasData = true;
+  }
+
   // Returns steering value normalized to 0.0 (left) - 1.0 (right)
   float getSteer() {
     return steer;

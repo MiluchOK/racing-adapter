@@ -18,6 +18,15 @@ from .packets import (
     MotionEx,
     ParticipantData,
     CarSetup,
+    EventData,
+    FinalClassification,
+    LobbyInfo,
+    LapHistoryItem,
+    SessionHistory,
+    TyreSetInfo,
+    TyreSetData,
+    TimeTrialDataSet,
+    TimeTrial,
     TyreData,
     Vector3,
     Weather,
@@ -420,6 +429,438 @@ def parse_car_motion(data: bytes, car_index: int) -> Optional[CarMotion]:
             yaw=ypr[0],
             pitch=ypr[1],
             roll=ypr[2],
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_motion_ex(data: bytes) -> Optional[MotionEx]:
+    """Parse extended motion data (player car only)."""
+    if len(data) < 29 + 217:
+        return None
+
+    try:
+        d = data[29:]
+
+        susp_pos = struct.unpack("<4f", d[0:16])
+        susp_vel = struct.unpack("<4f", d[16:32])
+        susp_acc = struct.unpack("<4f", d[32:48])
+        wheel_speed = struct.unpack("<4f", d[48:64])
+        wheel_slip_ratio = struct.unpack("<4f", d[64:80])
+        wheel_slip_angle = struct.unpack("<4f", d[80:96])
+        wheel_lat_force = struct.unpack("<4f", d[96:112])
+        wheel_long_force = struct.unpack("<4f", d[112:128])
+        height_cog = struct.unpack("<f", d[128:132])[0]
+        local_vel = struct.unpack("<3f", d[132:144])
+        angular_vel = struct.unpack("<3f", d[144:156])
+        angular_acc = struct.unpack("<3f", d[156:168])
+        front_wheels_angle = struct.unpack("<f", d[168:172])[0]
+        wheel_vert_force = struct.unpack("<4f", d[172:188])
+
+        return MotionEx(
+            suspension_position=TyreData(*susp_pos),
+            suspension_velocity=TyreData(*susp_vel),
+            suspension_acceleration=TyreData(*susp_acc),
+            wheel_speed=TyreData(*wheel_speed),
+            wheel_slip_ratio=TyreData(*wheel_slip_ratio),
+            wheel_slip_angle=TyreData(*wheel_slip_angle),
+            wheel_lat_force=TyreData(*wheel_lat_force),
+            wheel_long_force=TyreData(*wheel_long_force),
+            height_of_cog_above_ground=height_cog,
+            local_velocity=Vector3(*local_vel),
+            angular_velocity=Vector3(*angular_vel),
+            angular_acceleration=Vector3(*angular_acc),
+            front_wheels_angle=front_wheels_angle,
+            wheel_vert_force=TyreData(*wheel_vert_force),
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_participants(data: bytes, car_index: int) -> Optional[ParticipantData]:
+    """Parse participant data for specific car."""
+    header_size = 29
+    # First byte after header is m_numActiveCars
+    participant_size = 58  # per-car participant record
+    offset = header_size + 1 + (car_index * participant_size)
+
+    if len(data) < offset + participant_size:
+        return None
+
+    try:
+        d = data[offset:offset + participant_size]
+
+        ai = bool(d[0])
+        driver_id = d[1]
+        network_id = d[2]
+        team_id = d[3]
+        my_team = bool(d[4])
+        race_number = d[5]
+        nationality = d[6]
+        name = d[7:55].split(b"\x00")[0].decode("utf-8", errors="replace")
+        telemetry_public = bool(d[55])
+        show_online = bool(d[56])
+        platform = d[57]
+
+        return ParticipantData(
+            ai_controlled=ai,
+            driver_id=driver_id,
+            network_id=network_id,
+            team=Team(team_id) if team_id <= 9 else team_id,
+            my_team=my_team,
+            race_number=race_number,
+            nationality=nationality,
+            name=name,
+            telemetry_public=telemetry_public,
+            show_online_names=show_online,
+            tech_level=0,
+            platform=platform,
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_car_setup(data: bytes, car_index: int) -> Optional[CarSetup]:
+    """Parse car setup for specific car."""
+    header_size = 29
+    setup_size = 53
+    offset = header_size + (car_index * setup_size)
+
+    if len(data) < offset + setup_size:
+        return None
+
+    try:
+        d = data[offset:offset + setup_size]
+
+        front_wing = d[0]
+        rear_wing = d[1]
+        on_throttle = d[2]
+        off_throttle = d[3]
+        front_camber = struct.unpack("<f", d[4:8])[0]
+        rear_camber = struct.unpack("<f", d[8:12])[0]
+        front_toe = struct.unpack("<f", d[12:16])[0]
+        rear_toe = struct.unpack("<f", d[16:20])[0]
+        front_susp = d[20]
+        rear_susp = d[21]
+        front_arb = d[22]
+        rear_arb = d[23]
+        front_height = d[24]
+        rear_height = d[25]
+        brake_pressure = d[26]
+        brake_bias = d[27]
+        rl_pressure = struct.unpack("<f", d[28:32])[0]
+        rr_pressure = struct.unpack("<f", d[32:36])[0]
+        fl_pressure = struct.unpack("<f", d[36:40])[0]
+        fr_pressure = struct.unpack("<f", d[40:44])[0]
+        ballast = d[44]
+        fuel_load = struct.unpack("<f", d[45:49])[0]
+        engine_braking = d[49] if len(d) > 49 else 0
+
+        return CarSetup(
+            front_wing=front_wing,
+            rear_wing=rear_wing,
+            on_throttle=on_throttle,
+            off_throttle=off_throttle,
+            front_camber=front_camber,
+            rear_camber=rear_camber,
+            front_toe=front_toe,
+            rear_toe=rear_toe,
+            front_suspension=front_susp,
+            rear_suspension=rear_susp,
+            front_anti_roll_bar=front_arb,
+            rear_anti_roll_bar=rear_arb,
+            front_suspension_height=front_height,
+            rear_suspension_height=rear_height,
+            brake_pressure=brake_pressure,
+            brake_bias=brake_bias,
+            rear_left_tyre_pressure=rl_pressure,
+            rear_right_tyre_pressure=rr_pressure,
+            front_left_tyre_pressure=fl_pressure,
+            front_right_tyre_pressure=fr_pressure,
+            ballast=ballast,
+            fuel_load=fuel_load,
+            engine_braking=engine_braking,
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_event(data: bytes) -> Optional[EventData]:
+    """Parse event packet."""
+    if len(data) < 29 + 4:
+        return None
+
+    try:
+        d = data[29:]
+        event_code = d[0:4].decode("utf-8", errors="replace")
+
+        event = EventData(event_code=event_code)
+        details = d[4:]
+
+        if event_code == EventData.FASTEST_LAP and len(details) >= 5:
+            event.vehicle_index = details[0]
+            event.lap_time = struct.unpack("<f", details[1:5])[0]
+        elif event_code in (EventData.RETIREMENT, EventData.TEAM_MATE_IN_PITS,
+                            EventData.RACE_WINNER) and len(details) >= 1:
+            event.vehicle_index = details[0]
+        elif event_code == EventData.PENALTY_ISSUED and len(details) >= 7:
+            event.penalty_type = details[0]
+            event.infringement_type = details[1]
+            event.vehicle_index = details[2]
+            event.other_vehicle_index = details[3]
+            event.time = details[4]
+            event.lap_num = details[5]
+            event.places_gained = details[6]
+        elif event_code == EventData.SPEED_TRAP and len(details) >= 5:
+            event.vehicle_index = details[0]
+            event.speed = struct.unpack("<f", details[1:5])[0]
+        elif event_code == EventData.OVERTAKE and len(details) >= 2:
+            event.vehicle_index = details[0]
+            event.other_vehicle_index = details[1]
+
+        return event
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_final_classification(data: bytes, car_index: int) -> Optional[FinalClassification]:
+    """Parse final classification for specific car."""
+    header_size = 29
+    # First byte after header is m_numCars
+    classification_size = 37
+    offset = header_size + 1 + (car_index * classification_size)
+
+    if len(data) < offset + classification_size:
+        return None
+
+    try:
+        d = data[offset:offset + classification_size]
+
+        position = d[0]
+        num_laps = d[1]
+        grid_position = d[2]
+        points = d[3]
+        num_pit_stops = d[4]
+        result_status = d[5]
+        best_lap = struct.unpack("<f", d[6:10])[0]
+        total_time = struct.unpack("<d", d[10:18])[0]
+        penalties_time = d[18]
+        num_penalties = d[19]
+        num_tyre_stints = d[20]
+        tyre_actual = list(d[21:29])
+        tyre_visual = list(d[29:37])
+
+        return FinalClassification(
+            position=position,
+            num_laps=num_laps,
+            grid_position=grid_position,
+            points=points,
+            num_pit_stops=num_pit_stops,
+            result_status=result_status,
+            best_lap_time=best_lap,
+            total_race_time=total_time,
+            penalties_time=penalties_time,
+            num_penalties=num_penalties,
+            num_tyre_stints=num_tyre_stints,
+            tyre_stints_actual=tyre_actual[:num_tyre_stints],
+            tyre_stints_visual=tyre_visual[:num_tyre_stints],
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_lobby_info(data: bytes, car_index: int) -> Optional[LobbyInfo]:
+    """Parse lobby info for specific player."""
+    header_size = 29
+    # First byte after header is m_numPlayers
+    lobby_size = 55
+    offset = header_size + 1 + (car_index * lobby_size)
+
+    if len(data) < offset + lobby_size:
+        return None
+
+    try:
+        d = data[offset:offset + lobby_size]
+
+        ai = bool(d[0])
+        team_id = d[1]
+        nationality = d[2]
+        name = d[3:51].split(b"\x00")[0].decode("utf-8", errors="replace")
+        ready_status = d[51]
+        tech_level = struct.unpack("<H", d[53:55])[0] if len(d) >= 55 else 0
+
+        return LobbyInfo(
+            ai_controlled=ai,
+            team_id=team_id,
+            nationality=nationality,
+            name=name,
+            ready_status=ready_status,
+            tech_level=tech_level,
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_session_history(data: bytes) -> Optional[SessionHistory]:
+    """Parse session history packet."""
+    if len(data) < 29 + 7:
+        return None
+
+    try:
+        d = data[29:]
+
+        car_idx = d[0]
+        num_laps = d[1]
+        num_tyre_stints = d[2]
+        best_lap_num = d[3]
+        best_s1_num = d[4]
+        best_s2_num = d[5]
+        best_s3_num = d[6]
+
+        lap_history = []
+        lap_offset = 7
+        lap_size = 11
+
+        for i in range(min(num_laps, 100)):
+            lo = lap_offset + (i * lap_size)
+            if lo + lap_size > len(d):
+                break
+
+            lap_time_ms = struct.unpack("<I", d[lo:lo + 4])[0]
+            s1_ms = struct.unpack("<H", d[lo + 4:lo + 6])[0]
+            s2_ms = struct.unpack("<H", d[lo + 6:lo + 8])[0]
+            s3_ms = struct.unpack("<H", d[lo + 8:lo + 10])[0]
+            flags = d[lo + 10]
+
+            lap_history.append(LapHistoryItem(
+                lap_time_ms=lap_time_ms,
+                sector1_time_ms=s1_ms,
+                sector2_time_ms=s2_ms,
+                sector3_time_ms=s3_ms,
+                lap_valid=bool(flags & 0x01),
+                sector1_valid=bool(flags & 0x02),
+                sector2_valid=bool(flags & 0x04),
+                sector3_valid=bool(flags & 0x08),
+            ))
+
+        return SessionHistory(
+            car_index=car_idx,
+            num_laps=num_laps,
+            num_tyre_stints=num_tyre_stints,
+            best_lap_time_lap_num=best_lap_num,
+            best_sector1_lap_num=best_s1_num,
+            best_sector2_lap_num=best_s2_num,
+            best_sector3_lap_num=best_s3_num,
+            lap_history=lap_history,
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def parse_tyre_sets(data: bytes) -> Optional[TyreSetData]:
+    """Parse tyre sets packet."""
+    if len(data) < 29 + 3:
+        return None
+
+    try:
+        d = data[29:]
+
+        car_idx = d[0]
+        fitted_idx = d[2] if len(d) > 2 else 255
+
+        tyre_sets = []
+        set_offset = 3
+        set_size = 9  # per tyre set record
+
+        for i in range(20):
+            so = set_offset + (i * set_size)
+            if so + set_size > len(d):
+                break
+
+            actual_compound = d[so]
+            visual_compound = d[so + 1]
+            wear = d[so + 2]
+            available = bool(d[so + 3])
+            recommended_session = d[so + 4]
+            life_span = d[so + 5]
+            usable_life = d[so + 6]
+            lap_delta = struct.unpack("<h", d[so + 7:so + 9])[0]
+            fitted = bool(d[so + 2] == 0 and i == fitted_idx)
+
+            tyre_sets.append(TyreSetInfo(
+                actual_compound=actual_compound,
+                visual_compound=visual_compound,
+                wear=wear,
+                available=available,
+                recommended_session=recommended_session,
+                life_span=life_span,
+                usable_life=usable_life,
+                lap_delta_time=lap_delta,
+                fitted=(i == fitted_idx),
+            ))
+
+        return TyreSetData(
+            car_index=car_idx,
+            tyre_sets=tyre_sets,
+            fitted_index=fitted_idx,
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def _parse_time_trial_dataset(d: bytes) -> Optional[TimeTrialDataSet]:
+    """Parse a single time trial data set (24 bytes)."""
+    if len(d) < 24:
+        return None
+
+    car_idx = d[0]
+    team_id = d[1]
+    lap_time = struct.unpack("<I", d[2:6])[0]
+    s1 = struct.unpack("<I", d[6:10])[0]
+    s2 = struct.unpack("<I", d[10:14])[0]
+    s3 = struct.unpack("<I", d[14:18])[0]
+    tc = d[18]
+    gearbox = d[19]
+    abs_on = bool(d[20])
+    equal_perf = bool(d[21])
+    custom_setup = bool(d[22])
+    valid = bool(d[23])
+
+    return TimeTrialDataSet(
+        car_index=car_idx,
+        team_id=team_id,
+        lap_time_ms=lap_time,
+        sector1_time_ms=s1,
+        sector2_time_ms=s2,
+        sector3_time_ms=s3,
+        traction_control=tc,
+        gearbox_assist=gearbox,
+        anti_lock_brakes=abs_on,
+        equal_car_performance=equal_perf,
+        custom_setup=custom_setup,
+        valid=valid,
+    )
+
+
+def parse_time_trial(data: bytes) -> Optional[TimeTrial]:
+    """Parse time trial packet."""
+    if len(data) < 29 + 72:
+        return None
+
+    try:
+        d = data[29:]
+
+        player_best = _parse_time_trial_dataset(d[0:24])
+        personal_best = _parse_time_trial_dataset(d[24:48])
+        rival = _parse_time_trial_dataset(d[48:72])
+
+        if not all([player_best, personal_best, rival]):
+            return None
+
+        return TimeTrial(
+            player_session_best=player_best,
+            personal_best=personal_best,
+            rival=rival,
         )
     except (struct.error, ValueError, IndexError):
         return None

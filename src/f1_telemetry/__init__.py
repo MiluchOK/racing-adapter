@@ -12,6 +12,15 @@ from .packets import (
     MotionEx,
     ParticipantData,
     CarSetup,
+    EventData,
+    FinalClassification,
+    LobbyInfo,
+    LapHistoryItem,
+    SessionHistory,
+    TyreSetInfo,
+    TyreSetData,
+    TimeTrialDataSet,
+    TimeTrial,
 )
 
 __all__ = [
@@ -26,4 +35,13 @@ __all__ = [
     "MotionEx",
     "ParticipantData",
     "CarSetup",
+    "EventData",
+    "FinalClassification",
+    "LobbyInfo",
+    "LapHistoryItem",
+    "SessionHistory",
+    "TyreSetInfo",
+    "TyreSetData",
+    "TimeTrialDataSet",
+    "TimeTrial",
 ]

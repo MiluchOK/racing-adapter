@@ -1,0 +1,5 @@
+{
+  "serial_port": "/dev/cu.usbmodem3CDC75EDAA6C2",
+  "baud_rate": 115200,
+  "servo_pin": 9
+}
