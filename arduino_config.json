@@ -1,5 +1,6 @@
 {
   "serial_port": "/dev/cu.usbmodem3CDC75EDAA6C2",
   "baud_rate": 115200,
-  "servo_pin": 9
+  "servo_pin": 9,
+  "steering_trim_us": -270
 }

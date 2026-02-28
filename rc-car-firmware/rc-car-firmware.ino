@@ -11,10 +11,11 @@
  * Throttle:  float string, 0.0 (idle) … 1.0 (full throttle)
  *            Motor mapping:  0.0 → PWM 0,  1.0 → PWM 255
  *
- * Pin assignments:
- *   Servo:      pin 9
- *   Motor DIR:  pin 5  (L293D IN1)
- *   Motor PWM:  pin 6  (L293D EN1)
+ * Pin assignments (Arduino Motor Shield Rev3):
+ *   Servo:        A2   (TinkerKit IN2 connector)
+ *   Motor A DIR:  D12
+ *   Motor A PWM:  D3
+ *   Motor A BRK:  D9   (set LOW to release brake)
  *
  * Required libraries (install via Library Manager):
  *   - ArduinoMqttClient
@@ -34,9 +35,10 @@ const int   MQTT_PORT       = 1883;
 const char* TOPIC_STEERING  = "f1/steering";
 const char* TOPIC_THROTTLE  = "f1/throttle";
 
-const int SERVO_PIN     = 9;
-const int MOTOR_DIR_PIN = 5;
-const int MOTOR_PWM_PIN = 6;
+const int SERVO_PIN       = A2;   // TinkerKit IN2
+const int MOTOR_DIR_PIN   = 12;   // Motor Shield Ch A direction
+const int MOTOR_PWM_PIN   = 3;    // Motor Shield Ch A PWM
+const int MOTOR_BRAKE_PIN = 9;    // Motor Shield Ch A brake
 
 // ── Objects ─────────────────────────────────────────────────────────
 WiFiClient   wifiClient;
@@ -109,15 +111,15 @@ void applyThrottle(float throttleValue) {
   if (throttleValue > 1.0f) throttleValue = 1.0f;
 
   if (throttleValue < 0.01f) {
-    // Active brake: EN1=HIGH, IN1=LOW, IN2=LOW → both outputs LOW
-    // This shorts motor terminals to GND, stopping it quickly.
-    digitalWrite(MOTOR_DIR_PIN, LOW);
-    digitalWrite(MOTOR_PWM_PIN, HIGH);
+    // Active brake: set brake pin HIGH to short motor terminals
+    digitalWrite(MOTOR_BRAKE_PIN, HIGH);
+    analogWrite(MOTOR_PWM_PIN, 0);
     Serial.println("Throttle 0.00 → BRAKE");
   } else {
-    // Forward: IN1=HIGH, EN1=PWM
+    // Forward: release brake, set direction, apply PWM
     int pwm = (int)(throttleValue * 255.0f);
     if (pwm > 255) pwm = 255;
+    digitalWrite(MOTOR_BRAKE_PIN, LOW);
     digitalWrite(MOTOR_DIR_PIN, HIGH);
     analogWrite(MOTOR_PWM_PIN, pwm);
     Serial.print("Throttle ");
@@ -137,8 +139,10 @@ void setup() {
 
   pinMode(MOTOR_DIR_PIN, OUTPUT);
   pinMode(MOTOR_PWM_PIN, OUTPUT);
+  pinMode(MOTOR_BRAKE_PIN, OUTPUT);
   digitalWrite(MOTOR_DIR_PIN, LOW);
   analogWrite(MOTOR_PWM_PIN, 0);
+  digitalWrite(MOTOR_BRAKE_PIN, HIGH);  // brake until commanded
 
   connectWifi();
   connectMqtt();

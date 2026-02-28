@@ -10,8 +10,14 @@
  *   1. Pin readback   — verify each control pin can drive HIGH/LOW
  *   2. Analog baseline — check for unexpected voltages on analog pins
  *   3. LED matrix      — display test pattern
- *   4. Servo sweep     — sweep servo on pin 9 through 0°→180°→90°
- *   5. Motor ramp      — ramp PWM on pin 6 with direction on pin 5
+ *   4. Servo sweep     — sweep servo on A2 (TinkerKit IN2) through 0°→180°→90°
+ *   5. Motor ramp      — ramp PWM on D3 with direction on D12, brake on D9
+ *
+ * Pin assignments (Arduino Motor Shield Rev3):
+ *   Servo:        A2  (TinkerKit IN2)
+ *   Motor A DIR:  D12
+ *   Motor A PWM:  D3
+ *   Motor A BRK:  D9
  *
  * After running, use `racing-adapter firmware_upload` to restore normal firmware.
  */
@@ -19,9 +25,10 @@
 #include <Servo.h>
 #include "Arduino_LED_Matrix.h"
 
-const int PIN_MOTOR_DIR = 5;
-const int PIN_MOTOR_PWM = 6;
-const int PIN_SERVO     = 9;
+const int PIN_MOTOR_DIR   = 12;
+const int PIN_MOTOR_PWM   = 3;
+const int PIN_MOTOR_BRAKE = 9;
+const int PIN_SERVO       = A2;
 
 Servo testServo;
 ArduinoLEDMatrix matrix;
@@ -153,9 +160,14 @@ void testMotorRamp() {
 
   pinMode(PIN_MOTOR_DIR, OUTPUT);
   pinMode(PIN_MOTOR_PWM, OUTPUT);
+  pinMode(PIN_MOTOR_BRAKE, OUTPUT);
+
+  // Release brake
+  digitalWrite(PIN_MOTOR_BRAKE, LOW);
+  report("motor_ramp", "INFO", "Brake released (pin 9 LOW)");
 
   digitalWrite(PIN_MOTOR_DIR, HIGH);
-  report("motor_ramp", "INFO", "Direction FORWARD (pin 5 HIGH)");
+  report("motor_ramp", "INFO", "Direction FORWARD (pin 12 HIGH)");
 
   int steps[] = {0, 64, 128, 192, 255, 0};
   int numSteps = 6;
@@ -168,6 +180,8 @@ void testMotorRamp() {
     delay(800);
   }
 
+  // Engage brake, stop motor
+  digitalWrite(PIN_MOTOR_BRAKE, HIGH);
   digitalWrite(PIN_MOTOR_DIR, LOW);
   analogWrite(PIN_MOTOR_PWM, 0);
   report("motor_ramp", "PASS", "Ramp complete — verify motor responded");
@@ -181,9 +195,10 @@ void setup() {
 
   Serial.println("DIAG:START");
 
-  testPinReadback(PIN_MOTOR_DIR, "pin_motor_dir");
-  testPinReadback(PIN_MOTOR_PWM, "pin_motor_pwm");
-  testPinReadback(PIN_SERVO,     "pin_servo");
+  testPinReadback(PIN_MOTOR_DIR,   "pin_motor_dir");
+  testPinReadback(PIN_MOTOR_PWM,   "pin_motor_pwm");
+  testPinReadback(PIN_MOTOR_BRAKE, "pin_motor_brake");
+  testPinReadback(PIN_SERVO,       "pin_servo");
 
   testAnalogBaseline();
 
