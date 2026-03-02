@@ -2,5 +2,6 @@
 
 from .dispatcher import F1Dispatcher
 from .mqtt import MqttPublisher
+from .lap_reporter import LapReporter
 
-__all__ = ["F1Dispatcher", "MqttPublisher"]
+__all__ = ["F1Dispatcher", "MqttPublisher", "LapReporter"]

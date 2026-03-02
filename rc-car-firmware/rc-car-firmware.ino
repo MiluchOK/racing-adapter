@@ -50,6 +50,14 @@ Servo        steeringServo;
 // LED matrix frame buffer (8 rows × 12 columns)
 uint8_t frame[8][12] = {0};
 
+// Throttle LED updates to avoid I2C overhead every loop
+unsigned long lastMatrixMs = 0;
+const unsigned long MATRIX_INTERVAL_MS = 100;  // 10 Hz
+
+// Throttle serial debug to avoid blocking
+unsigned long lastDebugMs = 0;
+const unsigned long DEBUG_INTERVAL_MS = 500;
+
 // ── WiFi ────────────────────────────────────────────────────────────
 void connectWifi() {
   Serial.print("Connecting to WiFi: ");
@@ -82,51 +90,36 @@ void connectMqtt() {
   Serial.println("Subscribed to f1/steering + f1/throttle");
 }
 
+// Cached latest values for deferred LED / debug output
+float lastSteer = 0.0f;
+float lastThrottle = 0.0f;
+
 // ── Steering ────────────────────────────────────────────────────────
 void applySteering(float steerValue) {
-  // steerValue: -1.0 (full left) … 1.0 (full right)
-  // Map to servo: 0° … 180°
   int angle = (int)((steerValue + 1.0f) * 0.5f * 180.0f);
   if (angle < 0)   angle = 0;
   if (angle > 180) angle = 180;
 
   steeringServo.write(angle);
-
-  // Normalise to 0..1 for LED bar
-  float norm = (steerValue + 1.0f) * 0.5f;
-  driveData.setSteer(norm);
-  driveData.renderSteer(frame);
-  matrix.renderBitmap(frame, 8, 12);
-
-  Serial.print("Steer ");
-  Serial.print(steerValue, 2);
-  Serial.print(" → angle ");
-  Serial.println(angle);
+  lastSteer = steerValue;
 }
 
 // ── Throttle ────────────────────────────────────────────────────────
 void applyThrottle(float throttleValue) {
-  // throttleValue: 0.0 (idle) … 1.0 (full)
   if (throttleValue < 0.0f) throttleValue = 0.0f;
   if (throttleValue > 1.0f) throttleValue = 1.0f;
 
   if (throttleValue < 0.01f) {
-    // Active brake: set brake pin HIGH to short motor terminals
     digitalWrite(MOTOR_BRAKE_PIN, HIGH);
     analogWrite(MOTOR_PWM_PIN, 0);
-    Serial.println("Throttle 0.00 → BRAKE");
   } else {
-    // Forward: release brake, set direction, apply PWM
     int pwm = (int)(throttleValue * 255.0f);
     if (pwm > 255) pwm = 255;
     digitalWrite(MOTOR_BRAKE_PIN, LOW);
     digitalWrite(MOTOR_DIR_PIN, HIGH);
     analogWrite(MOTOR_PWM_PIN, pwm);
-    Serial.print("Throttle ");
-    Serial.print(throttleValue, 2);
-    Serial.print(" → PWM ");
-    Serial.println(pwm);
   }
+  lastThrottle = throttleValue;
 }
 
 // ── Arduino entry points ────────────────────────────────────────────
@@ -159,14 +152,13 @@ void loop() {
     connectMqtt();
   }
 
-  // Poll MQTT
+  // Poll MQTT, then drain up to 20 queued messages before yielding
+  // back so the WiFi stack stays healthy.
   mqttClient.poll();
 
-  int messageSize = mqttClient.parseMessage();
-  if (messageSize) {
+  for (int i = 0; i < 20 && mqttClient.parseMessage(); i++) {
     String topic = mqttClient.messageTopic();
 
-    // Read payload into buffer
     char buf[32];
     int len = 0;
     while (mqttClient.available() && len < (int)sizeof(buf) - 1) {
@@ -181,5 +173,24 @@ void loop() {
     } else if (topic == TOPIC_THROTTLE) {
       applyThrottle(value);
     }
+  }
+
+  // LED matrix at 10 Hz (not every message)
+  unsigned long now = millis();
+  if (now - lastMatrixMs >= MATRIX_INTERVAL_MS) {
+    lastMatrixMs = now;
+    float norm = (lastSteer + 1.0f) * 0.5f;
+    driveData.setSteer(norm);
+    driveData.renderSteer(frame);
+    matrix.renderBitmap(frame, 8, 12);
+  }
+
+  // Debug output at 2 Hz
+  if (now - lastDebugMs >= DEBUG_INTERVAL_MS) {
+    lastDebugMs = now;
+    Serial.print("Steer ");
+    Serial.print(lastSteer, 2);
+    Serial.print("  Throttle ");
+    Serial.println(lastThrottle, 2);
   }
 }

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from f1_dispatcher import F1Dispatcher, MqttPublisher
+from f1_dispatcher import F1Dispatcher, MqttPublisher, LapReporter
 from f1_telemetry.packets import PacketType
 
 CONFIG_PATH = Path.cwd() / "arduino_config.json"
@@ -74,7 +74,8 @@ def cli():
 @click.option("--no-serial", "no_serial", is_flag=True, default=False, help="Skip Arduino serial connection.")
 @click.option("--mqtt/--no-mqtt", default=True, show_default=True, help="Enable/disable MQTT publishing.")
 @click.option("--mqtt-broker", default="10.0.0.102:1883", show_default=True, help="MQTT broker host:port.")
-def f1_listener_start(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str):
+@click.option("--scoreboard/--no-scoreboard", default=True, show_default=True, help="Enable/disable lap record reporting.")
+def f1_listener_start(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboard: bool):
     """Start the F1 UDP telemetry listener."""
     ser = None
     if not no_serial:
@@ -92,6 +93,11 @@ def f1_listener_start(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str):
         mqtt_pub.register(dispatcher)
         mqtt_pub.connect()
         click.echo(f"MQTT publishing to {broker_host}:{broker_port}")
+
+    lap_reporter = None
+    if scoreboard:
+        lap_reporter = LapReporter()
+        lap_reporter.register(dispatcher)
 
     @dispatcher.on(PacketType.CAR_TELEMETRY)
     def _on_telemetry(header, data):
