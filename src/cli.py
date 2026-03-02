@@ -69,14 +69,14 @@ def cli():
     """Racing adapter CLI."""
 
 
-@cli.command("F1_listener_start")
+@cli.command("f1-router")
 @click.option("--port", default=20777, show_default=True, help="UDP port to listen on.")
 @click.option("--no-serial", "no_serial", is_flag=True, default=False, help="Skip Arduino serial connection.")
 @click.option("--mqtt/--no-mqtt", default=True, show_default=True, help="Enable/disable MQTT publishing.")
 @click.option("--mqtt-broker", default="10.0.0.102:1883", show_default=True, help="MQTT broker host:port.")
 @click.option("--scoreboard/--no-scoreboard", default=True, show_default=True, help="Enable/disable lap record reporting.")
-def f1_listener_start(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboard: bool):
-    """Start the F1 UDP telemetry listener."""
+def f1_router(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboard: bool):
+    """F1 telemetry router — listens for UDP data and fans out to MQTT, serial, and scoreboard."""
     ser = None
     if not no_serial:
         config = _load_config()
@@ -110,7 +110,7 @@ def f1_listener_start(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, 
     stop_event = threading.Event()
 
     def _handle_signal(signum, frame):
-        click.echo("\nStopping listener...")
+        click.echo("\nStopping f1-router...")
         stop_event.set()
 
     signal.signal(signal.SIGINT, _handle_signal)
@@ -121,9 +121,11 @@ def f1_listener_start(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, 
         parts.append("serial")
     if mqtt_pub:
         parts.append("mqtt")
+    if lap_reporter:
+        parts.append("scoreboard")
     parts.append("terminal")
     mode = " + ".join(parts)
-    click.echo(f"Listening for F1 telemetry on UDP port {port} ({mode})  (Ctrl+C to stop)")
+    click.echo(f"f1-router listening on UDP :{port} ({mode})  Ctrl+C to stop")
     dispatcher.start()
 
     stop_event.wait()

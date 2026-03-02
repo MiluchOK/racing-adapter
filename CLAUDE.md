@@ -7,10 +7,11 @@
 
 ## CLI
 - `uv run racing-adapter --help` — list available commands
-- `uv run racing-adapter F1_listener_start` — start F1 UDP telemetry listener (default port 20777)
-- `uv run racing-adapter F1_listener_start --port 30000` — use a custom port
-- `uv run racing-adapter F1_listener_start --no-serial` — run without Arduino connection
-- `uv run racing-adapter F1_listener_start --no-mqtt` — run without MQTT (serial only)
+- `uv run racing-adapter f1-router` — start F1 telemetry router: UDP → MQTT + serial + scoreboard (default port 20777)
+- `uv run racing-adapter f1-router --port 30000` — use a custom port
+- `uv run racing-adapter f1-router --no-serial` — run without Arduino connection
+- `uv run racing-adapter f1-router --no-mqtt` — run without MQTT (serial only)
+- `uv run racing-adapter f1-router --no-scoreboard` — run without lap record reporting
 - `uv run racing-adapter firmware_upload` — compile and upload Arduino UNO R4 firmware
 - `uv run racing-adapter circuitry-diagnostics` — upload and run Arduino hardware diagnostics (pin readback, servo sweep, motor ramp)
 - `uv run racing-adapter diagnostics` — send test steering/throttle commands via MQTT
