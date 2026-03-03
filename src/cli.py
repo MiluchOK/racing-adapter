@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from f1_dispatcher import F1Dispatcher, MqttPublisher, LapReporter
+from f1_dispatcher import F1Dispatcher, MqttPublisher, LapReporter, LapRecorder
 from f1_telemetry.packets import PacketType
 
 CONFIG_PATH = Path.cwd() / "arduino_config.json"
@@ -75,7 +75,9 @@ def cli():
 @click.option("--mqtt/--no-mqtt", default=True, show_default=True, help="Enable/disable MQTT publishing.")
 @click.option("--mqtt-broker", default="10.0.0.102:1883", show_default=True, help="MQTT broker host:port.")
 @click.option("--scoreboard/--no-scoreboard", default=True, show_default=True, help="Enable/disable lap record reporting.")
-def f1_router(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboard: bool):
+@click.option("--record/--no-record", default=True, show_default=True, help="Enable/disable binary lap recording.")
+@click.option("--laps-dir", default="laps", show_default=True, help="Directory for recorded .f1lap files.")
+def f1_router(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboard: bool, record: bool, laps_dir: str):
     """F1 telemetry router — listens for UDP data and fans out to MQTT, serial, and scoreboard."""
     ser = None
     if not no_serial:
@@ -98,6 +100,12 @@ def f1_router(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboa
     if scoreboard:
         lap_reporter = LapReporter()
         lap_reporter.register(dispatcher)
+
+    lap_recorder = None
+    if record:
+        lap_recorder = LapRecorder(laps_dir=laps_dir)
+        lap_recorder.register(dispatcher)
+        click.echo(f"Lap recording to {laps_dir}/")
 
     @dispatcher.on(PacketType.CAR_TELEMETRY)
     def _on_telemetry(header, data):
@@ -123,6 +131,8 @@ def f1_router(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboa
         parts.append("mqtt")
     if lap_reporter:
         parts.append("scoreboard")
+    if lap_recorder:
+        parts.append("recorder")
     parts.append("terminal")
     mode = " + ".join(parts)
     click.echo(f"f1-router listening on UDP :{port} ({mode})  Ctrl+C to stop")
@@ -605,3 +615,62 @@ def esp32_diagnostics(fqbn: str, port: str | None):
 
     _print_report(results)
     click.echo("Run `racing-adapter esp32-firmware-upload` to restore normal firmware.")
+
+
+# ── Lap listing ──────────────────────────────────────────────────
+
+_TRACK_NAMES = {
+    0: "Melbourne", 1: "Paul Ricard", 2: "Shanghai", 3: "Bahrain",
+    4: "Catalunya", 5: "Monaco", 6: "Montreal", 7: "Silverstone",
+    8: "Hockenheim", 9: "Hungaroring", 10: "Spa", 11: "Monza",
+    12: "Singapore", 13: "Suzuka", 14: "Abu Dhabi", 15: "Texas",
+    16: "Brazil", 17: "Austria", 18: "Sochi", 19: "Mexico",
+    20: "Baku", 21: "Bahrain Short", 22: "Silverstone Short",
+    23: "Texas Short", 24: "Suzuka Short", 25: "Hanoi",
+    26: "Zandvoort", 27: "Imola", 28: "Portimao", 29: "Jeddah",
+    30: "Miami", 31: "Las Vegas", 32: "Losail",
+}
+
+_SESSION_NAMES = {
+    0: "Unknown", 1: "P1", 2: "P2", 3: "P3", 4: "Short P",
+    5: "Q1", 6: "Q2", 7: "Q3", 8: "Short Q", 9: "OSQ",
+    10: "Race", 11: "Race 2", 12: "Race 3", 13: "Time Trial",
+}
+
+
+def _format_lap_time(ms: int) -> str:
+    if ms == 0:
+        return "--:--.---"
+    mins = ms // 60000
+    secs = (ms % 60000) / 1000
+    return f"{mins}:{secs:06.3f}"
+
+
+@cli.command("laps")
+@click.option("--laps-dir", default="laps", show_default=True, help="Directory with recorded .f1lap files.")
+def list_laps_cmd(laps_dir: str):
+    """List recorded lap files."""
+    from f1_dispatcher.lap_reader import list_laps
+
+    laps = list_laps(laps_dir)
+    if not laps:
+        click.echo(f"No .f1lap files found in {laps_dir}/")
+        return
+
+    current_session = None
+    for lap in laps:
+        if lap.session_dir != current_session:
+            current_session = lap.session_dir
+            click.echo()
+            click.echo(click.style(f"  {current_session}", bold=True))
+
+        track = _TRACK_NAMES.get(lap.track_id, f"Track {lap.track_id}")
+        session = _SESSION_NAMES.get(lap.session_type, f"S{lap.session_type}")
+        time_str = _format_lap_time(lap.lap_time_ms)
+        valid = "" if lap.lap_valid else click.style(" INVALID", fg="red")
+        size_kb = (84 + lap.num_samples * 402) / 1024
+
+        click.echo(
+            f"    Lap {lap.lap_number:2d}  {time_str}  {track:16s}  {session:5s}"
+            f"  {lap.num_samples:4d} samples  {size_kb:6.0f} KB{valid}"
+        )
