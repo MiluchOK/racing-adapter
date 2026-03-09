@@ -1,11 +1,11 @@
-checksum: 21507
+checksum: 28617
 manuallyEdited: 0
 timezoneMinutes: 0
 hatsMode: TRIMS_ONLY
 ppmunit: 0
 semver: 2.10.0
 board: mt12
-calib: 
+calib:
    ST:
       mid: 1057
       spanNeg: 648
@@ -40,8 +40,8 @@ disableRtcWarning: 1
 keysBacklight: 0
 dontPlayHello: 0
 internalModule: TYPE_CROSSFIRE
-trainer: 
-   mix: 
+trainer:
+   mix:
       0:
          srcChn: 3
          mode: REPL
@@ -85,7 +85,7 @@ speakerVolume: 23
 vBatMin: 64
 vBatMax: 84
 backlightBright: 0
-globalTimer: 30804
+globalTimer: 30699
 bluetoothBaudrate: 0
 bluetoothMode: OFF
 countryCode: 0
@@ -104,11 +104,11 @@ backgroundVolume: 3
 varioPitch: 0
 varioRange: 0
 varioRepeat: 0
-serialPort: 
+serialPort:
    VCP:
       mode: CLI
       power: 0
-potsConfig: 
+potsConfig:
    P1:
       type: with_detent
       inv: 0
@@ -125,7 +125,7 @@ potsConfig:
       type: axis_y
       inv: 0
       name: ""
-switchConfig: 
+switchConfig:
    SA:
       type: 3pos
       name: ""
@@ -146,7 +146,7 @@ switchConfig:
       name: ""
 backlightColor: 0
 bluetoothName: "94832Q-"
-ownerRegistrationID: "UA-24"
+ownerRegistrationID: "MT12"
 rotEncMode: 0
 uartSampleMode: 0
 radioGFDisabled: 0

@@ -1,15 +1,15 @@
 semver: 2.10.0
 header: 
-   name: "UA-24"
+   name: "CAR2"
 timers: 
    0:
       start: 300
       swtch: "L1"
-      value: 297
+      value: 187
       mode: ON
       countdownBeep: 2
       minuteBeep: 1
-      persistent: 0
+      persistent: 2
       countdownStart: 1
       showElapsed: 0
       extraHaptic: 0
@@ -28,8 +28,6 @@ throttleReversed: 0
 enableCustomThrottleWarning: 0
 disableTelemetryWarning: 0
 showInstanceIds: 0
-checklistInteractive: 0
-hatsMode: TRIMS_ONLY
 customThrottleWarningPosition: 0
 beepANACenter: 0
 mixData: 
@@ -49,50 +47,20 @@ mixData:
    speedDown: 0
    name: ""
  -
-   weight: 86
+   weight: 100
    destCh: 1
    srcRaw: I1
    carryTrim: 0
    mixWarn: 0
    mltpx: ADD
    offset: 0
-   swtch: "!SA1"
-   flightModes: 000000000
-   delayUp: 0
-   delayDown: 0
-   speedUp: 7
-   speedDown: 0
-   name: ""
- -
-   weight: 14
-   destCh: 1
-   srcRaw: MAX
-   carryTrim: 0
-   mixWarn: 0
-   mltpx: ADD
-   offset: 0
-   swtch: "L6"
+   swtch: "NONE"
    flightModes: 000000000
    delayUp: 0
    delayDown: 0
    speedUp: 0
    speedDown: 0
-   name: "DZ"
- -
-   weight: 7
-   destCh: 1
-   srcRaw: MAX
-   carryTrim: 0
-   mixWarn: 0
-   mltpx: ADD
-   offset: 0
-   swtch: "SA1"
-   flightModes: 000000000
-   delayUp: 0
-   delayDown: 0
-   speedUp: 7
-   speedDown: 0
-   name: "Crawl"
+   name: ""
  -
    weight: 100
    destCh: 2
@@ -198,7 +166,7 @@ expoData:
    mode: 3
    scale: 0
    trimSource: 0
-   srcRaw: ST
+   srcRaw: TH
    chn: 0
    swtch: "NONE"
    flightModes: 000000000
@@ -209,10 +177,10 @@ expoData:
       type: 1
       value: 0
  -
-   mode: 2
+   mode: 3
    scale: 0
    trimSource: 0
-   srcRaw: TH
+   srcRaw: ST
    chn: 1
    swtch: "NONE"
    flightModes: 000000000
@@ -221,26 +189,12 @@ expoData:
    offset: 0
    curve: 
       type: 1
-      value: 40
- -
-   mode: 1
-   scale: 0
-   trimSource: 0
-   srcRaw: TH
-   chn: 1
-   swtch: "NONE"
-   flightModes: 000000000
-   weight: 40
-   name: "Rev"
-   offset: 0
-   curve: 
-      type: 1
       value: 0
  -
    mode: 3
    scale: 0
    trimSource: 0
-   srcRaw: P1
+   srcRaw: SA
    chn: 2
    swtch: "NONE"
    flightModes: 000000000
@@ -320,34 +274,6 @@ expoData:
    curve: 
       type: 1
       value: 0
- -
-   mode: 3
-   scale: 0
-   trimSource: 0
-   srcRaw: P3
-   chn: 8
-   swtch: "NONE"
-   flightModes: 000000000
-   weight: 100
-   name: ""
-   offset: 0
-   curve: 
-      type: 1
-      value: 0
- -
-   mode: 3
-   scale: 0
-   trimSource: 0
-   srcRaw: P4
-   chn: 9
-   swtch: "NONE"
-   flightModes: 000000000
-   weight: 100
-   name: ""
-   offset: 0
-   curve: 
-      type: 1
-      value: 0
 curves: 
    31:
       type: 1
@@ -366,13 +292,13 @@ points:
 logicalSw: 
    0:
       func: FUNC_STICKY
-      def: "SB2,SB2"
+      def: "SB0,SB0"
       andsw: "NONE"
       delay: 0
       duration: 0
    1:
       func: FUNC_VNEG
-      def: "I1,-5"
+      def: "I0,-5"
       andsw: "NONE"
       delay: 0
       duration: 0
@@ -384,7 +310,7 @@ logicalSw:
       duration: 0
    3:
       func: FUNC_VNEG
-      def: "I1,-75"
+      def: "I0,-75"
       andsw: "NONE"
       delay: 0
       duration: 0
@@ -394,78 +320,31 @@ logicalSw:
       andsw: "NONE"
       delay: 0
       duration: 0
-   5:
-      func: FUNC_VPOS
-      def: "TH,1"
-      andsw: "!SA1"
-      delay: 0
-      duration: 0
 customFn: 
    0:
       swtch: "L1"
       func: PLAY_TRACK
-      def: "start,1,!1x"
+      def: "start,1x"
    1:
       swtch: "!L1"
       func: PLAY_TRACK
-      def: "stop,1,!1x"
+      def: "stop,1x"
    2:
       swtch: "L2"
       func: RGB_LED
-      def: "red,1"
+      def: "red"
    3:
       swtch: "L3"
       func: RGB_LED
-      def: "Pfwrd,1"
+      def: "blue"
    4:
       swtch: "L4"
       func: RGB_LED
-      def: "police,1"
+      def: "police"
    5:
       swtch: "L5"
       func: RGB_LED
-      def: "rainbw,1"
-flightModeData: 
-   0:
-      trim: 
-         0:
-            value: -16
-            mode: 0
-         1:
-            value: -42
-            mode: 0
-         2:
-            value: 128
-            mode: 0
-         3:
-            value: -2
-            mode: 0
-         4:
-            value: -10
-            mode: 0
-      name: ""
-      swtch: "NONE"
-      fadeIn: 0
-      fadeOut: 0
-      gvars: 
-         0:
-            val: 0
-         1:
-            val: 0
-         2:
-            val: 0
-         3:
-            val: 0
-         4:
-            val: 0
-         5:
-            val: 0
-         6:
-            val: 0
-         7:
-            val: 0
-         8:
-            val: 0
+      def: "green"
 thrTraceSrc: TH
 switchWarningState: AuBuCuDu
 rssiSource: none
@@ -494,9 +373,9 @@ trainerData:
    pulsePol: 0
 inputNames: 
    0:
-      val: "St"
-   1:
       val: "Th"
+   1:
+      val: "St"
    2:
       val: "Sa"
    3:
