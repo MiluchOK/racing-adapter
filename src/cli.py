@@ -1,150 +1,17 @@
 """CLI entry point for racing-adapter."""
 
 import json
-import signal
-import threading
 import time
 from pathlib import Path
 
 import click
 
-from f1_dispatcher import F1Dispatcher, MqttPublisher, LapReporter, LapRecorder
-from f1_telemetry.packets import PacketType
-
 CONFIG_PATH = Path.cwd() / "arduino_config.json"
-
-
-def _load_config():
-    """Load arduino_config.json from project root."""
-    if not CONFIG_PATH.exists():
-        raise click.ClickException(f"Config not found: {CONFIG_PATH}")
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
-
-
-def _find_arduino_port():
-    """Auto-detect Arduino serial port."""
-    import serial.tools.list_ports
-
-    ports = serial.tools.list_ports.comports()
-    for port in ports:
-        if "Arduino" in port.description or "usbmodem" in port.device or "ttyACM" in port.device:
-            return port.device
-    if ports:
-        return ports[0].device
-    return None
-
-
-def _open_serial(config):
-    """Open serial connection based on config. Returns serial.Serial or None."""
-    import serial
-
-    port = config.get("serial_port", "auto")
-    baud = config.get("baud_rate", 115200)
-
-    if port == "auto":
-        port = _find_arduino_port()
-        if not port:
-            raise click.ClickException(
-                "No Arduino found. Set serial_port in arduino_config.json or use --no-serial."
-            )
-
-    click.echo(f"Opening serial port {port} at {baud} baud...")
-    try:
-        ser = serial.Serial(port, baud, timeout=0.1)
-    except serial.SerialException as e:
-        raise click.ClickException(f"Failed to open serial port: {e}")
-
-    time.sleep(2)  # wait for Arduino reset
-    while ser.in_waiting:
-        line = ser.readline().decode("utf-8", errors="ignore").strip()
-        if line:
-            click.echo(f"Arduino: {line}")
-
-    return ser
 
 
 @click.group()
 def cli():
     """Racing adapter CLI."""
-
-
-@cli.command("f1-router")
-@click.option("--port", default=20777, show_default=True, help="UDP port to listen on.")
-@click.option("--no-serial", "no_serial", is_flag=True, default=False, help="Skip Arduino serial connection.")
-@click.option("--mqtt/--no-mqtt", default=True, show_default=True, help="Enable/disable MQTT publishing.")
-@click.option("--mqtt-broker", default="10.0.0.102:1883", show_default=True, help="MQTT broker host:port.")
-@click.option("--scoreboard/--no-scoreboard", default=True, show_default=True, help="Enable/disable lap record reporting.")
-@click.option("--record/--no-record", default=True, show_default=True, help="Enable/disable binary lap recording.")
-@click.option("--laps-dir", default="laps", show_default=True, help="Directory for recorded .f1lap files.")
-def f1_router(port: int, no_serial: bool, mqtt: bool, mqtt_broker: str, scoreboard: bool, record: bool, laps_dir: str):
-    """F1 telemetry router — listens for UDP data and fans out to MQTT, serial, and scoreboard."""
-    ser = None
-    if not no_serial:
-        config = _load_config()
-        ser = _open_serial(config)
-        click.echo("Arduino connected.")
-
-    dispatcher = F1Dispatcher(port=port)
-
-    mqtt_pub = None
-    if mqtt:
-        broker_host, _, broker_port = mqtt_broker.partition(":")
-        broker_port = int(broker_port) if broker_port else 1883
-        mqtt_pub = MqttPublisher(host=broker_host, port=broker_port)
-        mqtt_pub.register(dispatcher)
-        mqtt_pub.connect()
-        click.echo(f"MQTT publishing to {broker_host}:{broker_port}")
-
-    lap_reporter = None
-    if scoreboard:
-        lap_reporter = LapReporter()
-        lap_reporter.register(dispatcher)
-
-    lap_recorder = None
-    if record:
-        lap_recorder = LapRecorder(laps_dir=laps_dir)
-        lap_recorder.register(dispatcher)
-        click.echo(f"Lap recording to {laps_dir}/")
-
-    @dispatcher.on(PacketType.CAR_TELEMETRY)
-    def _on_telemetry(header, data):
-        click.echo(f"\rsteer: {data.steer:+.2f}  throttle: {data.throttle:.2f}", nl=False)
-
-        if ser and ser.is_open:
-            cmd = f"S:{data.steer:.4f}\nT:{data.throttle:.4f}\n"
-            ser.write(cmd.encode())
-
-    stop_event = threading.Event()
-
-    def _handle_signal(signum, frame):
-        click.echo("\nStopping f1-router...")
-        stop_event.set()
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    parts = []
-    if ser:
-        parts.append("serial")
-    if mqtt_pub:
-        parts.append("mqtt")
-    if lap_reporter:
-        parts.append("scoreboard")
-    if lap_recorder:
-        parts.append("recorder")
-    parts.append("terminal")
-    mode = " + ".join(parts)
-    click.echo(f"f1-router listening on UDP :{port} ({mode})  Ctrl+C to stop")
-    dispatcher.start()
-
-    stop_event.wait()
-    dispatcher.stop()
-    if mqtt_pub:
-        mqtt_pub.disconnect()
-    if ser and ser.is_open:
-        ser.close()
-    click.echo("Stopped.")
 
 
 @cli.command("firmware_upload")
@@ -617,60 +484,69 @@ def esp32_diagnostics(fqbn: str, port: str | None):
     click.echo("Run `racing-adapter esp32-firmware-upload` to restore normal firmware.")
 
 
-# ── Lap listing ──────────────────────────────────────────────────
-
-_TRACK_NAMES = {
-    0: "Melbourne", 1: "Paul Ricard", 2: "Shanghai", 3: "Bahrain",
-    4: "Catalunya", 5: "Monaco", 6: "Montreal", 7: "Silverstone",
-    8: "Hockenheim", 9: "Hungaroring", 10: "Spa", 11: "Monza",
-    12: "Singapore", 13: "Suzuka", 14: "Abu Dhabi", 15: "Texas",
-    16: "Brazil", 17: "Austria", 18: "Sochi", 19: "Mexico",
-    20: "Baku", 21: "Bahrain Short", 22: "Silverstone Short",
-    23: "Texas Short", 24: "Suzuka Short", 25: "Hanoi",
-    26: "Zandvoort", 27: "Imola", 28: "Portimao", 29: "Jeddah",
-    30: "Miami", 31: "Las Vegas", 32: "Losail",
-}
-
-_SESSION_NAMES = {
-    0: "Unknown", 1: "P1", 2: "P2", 3: "P3", 4: "Short P",
-    5: "Q1", 6: "Q2", 7: "Q3", 8: "Short Q", 9: "OSQ",
-    10: "Race", 11: "Race 2", 12: "Race 3", 13: "Time Trial",
-}
+# ── Radio commands ───────────────────────────────────────────────
 
 
-def _format_lap_time(ms: int) -> str:
-    if ms == 0:
-        return "--:--.---"
-    mins = ms // 60000
-    secs = (ms % 60000) / 1000
-    return f"{mins}:{secs:06.3f}"
+@cli.command("radio-pull")
+@click.option("--mount-point", default=None, help="Radio mount point (auto-detected if omitted).")
+def radio_pull(mount_point: str | None):
+    """Pull EdgeTX configs from mounted radio SD card into rc-radio/."""
+    from radio_sync import find_radio_mount, pull_configs
+
+    if mount_point:
+        mount = Path(mount_point)
+        if not mount.exists():
+            raise click.ClickException(f"Mount point not found: {mount_point}")
+    else:
+        mount = find_radio_mount()
+        if not mount:
+            raise click.ClickException(
+                "No EdgeTX radio found in /Volumes/. "
+                "Connect the radio via USB and select 'USB Storage (SD)', "
+                "or pass --mount-point."
+            )
+
+    click.echo(f"Radio found at {mount}")
+    dest = Path.cwd() / "rc-radio"
+    copied = pull_configs(mount, dest)
+
+    if not copied:
+        click.echo("No .yml config files found on radio.")
+    else:
+        for f in copied:
+            click.echo(f"  ← {f}")
+        click.echo(f"Pulled {len(copied)} file(s) into rc-radio/")
 
 
-@cli.command("laps")
-@click.option("--laps-dir", default="laps", show_default=True, help="Directory with recorded .f1lap files.")
-def list_laps_cmd(laps_dir: str):
-    """List recorded lap files."""
-    from f1_dispatcher.lap_reader import list_laps
+@cli.command("radio-push")
+@click.option("--mount-point", default=None, help="Radio mount point (auto-detected if omitted).")
+def radio_push(mount_point: str | None):
+    """Push EdgeTX configs from rc-radio/ to mounted radio SD card."""
+    from radio_sync import find_radio_mount, push_configs
 
-    laps = list_laps(laps_dir)
-    if not laps:
-        click.echo(f"No .f1lap files found in {laps_dir}/")
-        return
+    if mount_point:
+        mount = Path(mount_point)
+        if not mount.exists():
+            raise click.ClickException(f"Mount point not found: {mount_point}")
+    else:
+        mount = find_radio_mount()
+        if not mount:
+            raise click.ClickException(
+                "No EdgeTX radio found in /Volumes/. "
+                "Connect the radio via USB and select 'USB Storage (SD)', "
+                "or pass --mount-point."
+            )
 
-    current_session = None
-    for lap in laps:
-        if lap.session_dir != current_session:
-            current_session = lap.session_dir
-            click.echo()
-            click.echo(click.style(f"  {current_session}", bold=True))
+    click.echo(f"Radio found at {mount}")
+    src = Path.cwd() / "rc-radio"
+    if not src.exists():
+        raise click.ClickException("rc-radio/ directory not found.")
 
-        track = _TRACK_NAMES.get(lap.track_id, f"Track {lap.track_id}")
-        session = _SESSION_NAMES.get(lap.session_type, f"S{lap.session_type}")
-        time_str = _format_lap_time(lap.lap_time_ms)
-        valid = "" if lap.lap_valid else click.style(" INVALID", fg="red")
-        size_kb = (84 + lap.num_samples * 402) / 1024
+    copied = push_configs(src, mount)
 
-        click.echo(
-            f"    Lap {lap.lap_number:2d}  {time_str}  {track:16s}  {session:5s}"
-            f"  {lap.num_samples:4d} samples  {size_kb:6.0f} KB{valid}"
-        )
+    if not copied:
+        click.echo("No .yml config files found in rc-radio/.")
+    else:
+        for f in copied:
+            click.echo(f"  → {f}")
+        click.echo(f"Pushed {len(copied)} file(s) to radio")

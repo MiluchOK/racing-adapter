@@ -1,13 +1,16 @@
 """F1Dispatcher - Listens for F1 UDP packets and dispatches parsed data to registered handlers."""
 
+import logging
 import socket
 import struct
 import threading
 from typing import Optional, Callable, Any
 from collections import defaultdict
 
-from f1_telemetry.packets import PacketType, PacketHeader
-from f1_telemetry.client import (
+logger = logging.getLogger("f1_service")
+
+from .packets import PacketType, PacketHeader
+from .parser import (
     parse_header,
     parse_session,
     parse_lap_data,
@@ -69,6 +72,7 @@ class F1Dispatcher:
     def __init__(self, port: int = 20777):
         self.port = port
         self._handlers: dict[PacketType, list[Callable]] = defaultdict(list)
+        self._raw_handlers: list[Callable] = []
         self._socket: Optional[socket.socket] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -94,6 +98,13 @@ class F1Dispatcher:
             self._handlers[packet_type].append(fn)
             return fn
         return decorator
+
+    def on_raw(self, handler: Callable) -> None:
+        """Register a handler that receives raw UDP bytes before parsing.
+
+        Handlers receive (raw_bytes: bytes).
+        """
+        self._raw_handlers.append(handler)
 
     def start(self):
         """Start listening for UDP packets and dispatching."""
@@ -128,11 +139,21 @@ class F1Dispatcher:
         while self._running:
             try:
                 data, _ = self._socket.recvfrom(4096)
+                for raw_handler in self._raw_handlers:
+                    try:
+                        raw_handler(data)
+                    except Exception:
+                        logger.error(
+                            "Raw handler %s failed",
+                            getattr(raw_handler, "__name__", raw_handler),
+                            exc_info=True,
+                        )
                 self._process_packet(data)
             except socket.timeout:
                 continue
             except Exception:
                 if self._running:
+                    logger.error("Listen loop error", exc_info=True)
                     continue
 
     def _process_packet(self, data: bytes):
@@ -163,4 +184,9 @@ class F1Dispatcher:
             try:
                 handler(header, parsed)
             except Exception:
-                pass
+                logger.error(
+                    "Handler %s failed on %s",
+                    getattr(handler, "__name__", handler),
+                    packet_type.name,
+                    exc_info=True,
+                )

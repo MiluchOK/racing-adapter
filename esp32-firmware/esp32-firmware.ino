@@ -18,12 +18,14 @@
  * Pin assignments:
  *   GPIO19 -> Steering servo signal (yellow)
  *   GPIO18 -> ESC signal (white)
+ *   GPIO5  -> WS2812 LED strip data
  *
  * ESC arming: sends 1500us (neutral) for 3 seconds during setup.
  *
  * Required libraries (install via Library Manager):
  *   - ESP32Servo
  *   - PubSubClient
+ *   - Adafruit NeoPixel
  *
  * Board: ESP32 DEVKITV1 (DOIT)
  */
@@ -31,11 +33,17 @@
 #include <ESP32Servo.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <Adafruit_NeoPixel.h>
 #include "arduino_secrets.h"
 
 // -- Pin assignments --
 const int SERVO_PIN = 19;
 const int ESC_PIN   = 18;
+const int LED_PIN   = 5;
+
+// -- LED strip --
+const int NUM_LEDS = 160;
+Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // -- PWM limits (microseconds) --
 const int SERVO_MIN_US = 1000;
@@ -210,6 +218,11 @@ void setup() {
   mqttClient.setCallback(mqttCallback);
   connectMqtt();
 
+  // Initialize LED strip
+  strip.begin();
+  strip.show();
+  Serial.println("LED strip initialized");
+
   Serial.println("Ready. MQTT + serial active.");
   Serial.println("  Serial: S:<float> for steering, T:<float> for throttle.");
   Serial.println("  MQTT:   f1/steering, f1/throttle");
@@ -228,6 +241,18 @@ void loop() {
 
   // Process MQTT messages
   mqttClient.loop();
+
+  // Walking LED animation — one red LED moves every second
+  static int ledPos = 0;
+  static unsigned long lastMove = 0;
+  unsigned long now = millis();
+  if (now - lastMove >= 40) {
+    strip.clear();
+    strip.setPixelColor(ledPos, strip.Color(255, 0, 0));
+    strip.show();
+    ledPos = (ledPos + 1) % NUM_LEDS;
+    lastMove = now;
+  }
 
   // Process serial commands
   while (Serial.available()) {

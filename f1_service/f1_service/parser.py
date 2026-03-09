@@ -148,13 +148,18 @@ def parse_session(data: bytes) -> Optional[SessionData]:
 
 
 def parse_lap_data(data: bytes, car_index: int) -> Optional[LapData]:
-    """Parse lap data for specific car."""
+    """Parse lap data for specific car. Handles F1 23 and F1 24 formats."""
     header_size = 29
     lap_size = 57
     offset = header_size + (car_index * lap_size)
 
     if len(data) < offset + lap_size:
         return None
+
+    # F1 24 (game_year >= 24) added minute parts to the delta fields,
+    # shifting all subsequent fields by +2 bytes.
+    # Header: uint16 packet_format, uint8 game_year — so game_year is at byte 2.
+    game_year = data[2]
 
     try:
         d = data[offset:offset + lap_size]
@@ -165,29 +170,39 @@ def parse_lap_data(data: bytes, car_index: int) -> Optional[LapData]:
         sector1_mins = d[10]
         sector2_ms = struct.unpack("<H", d[11:13])[0]
         sector2_mins = d[13]
-        delta_in_front = struct.unpack("<H", d[14:16])[0]
-        delta_leader = struct.unpack("<H", d[16:18])[0]
-        lap_distance = struct.unpack("<f", d[18:22])[0]
-        total_distance = struct.unpack("<f", d[22:26])[0]
-        safety_car_delta = struct.unpack("<f", d[26:30])[0]
-        position = d[30]
-        current_lap = d[31]
-        pit_status = d[32]
-        num_pit_stops = d[33]
-        sector = d[34]
-        current_lap_invalid = bool(d[35])
-        penalties = d[36]
-        total_warnings = d[37]
-        corner_cutting = d[38]
-        num_dt = d[39]
-        num_sg = d[40]
-        grid_position = d[41]
-        driver_status = d[42]
-        result_status = d[43]
-        pit_timer_active = bool(d[44])
-        pit_time_in_lane = struct.unpack("<H", d[45:47])[0]
-        pit_stop_timer = struct.unpack("<H", d[47:49])[0]
-        pit_serve_penalty = bool(d[49])
+
+        if game_year >= 24:
+            # F1 24+: deltas have ms + minutes parts
+            delta_in_front = struct.unpack("<H", d[14:16])[0] + d[16] * 60000
+            delta_leader = struct.unpack("<H", d[17:19])[0] + d[19] * 60000
+            p = 20  # remaining fields start at byte 20
+        else:
+            # F1 23: deltas are just ms
+            delta_in_front = struct.unpack("<H", d[14:16])[0]
+            delta_leader = struct.unpack("<H", d[16:18])[0]
+            p = 18
+
+        lap_distance = struct.unpack("<f", d[p:p+4])[0]
+        total_distance = struct.unpack("<f", d[p+4:p+8])[0]
+        safety_car_delta = struct.unpack("<f", d[p+8:p+12])[0]
+        position = d[p+12]
+        current_lap = d[p+13]
+        pit_status = d[p+14]
+        num_pit_stops = d[p+15]
+        sector = d[p+16]
+        current_lap_invalid = bool(d[p+17])
+        penalties = d[p+18]
+        total_warnings = d[p+19]
+        corner_cutting = d[p+20]
+        num_dt = d[p+21]
+        num_sg = d[p+22]
+        grid_position = d[p+23]
+        driver_status = d[p+24]
+        result_status = d[p+25]
+        pit_timer_active = bool(d[p+26])
+        pit_time_in_lane = struct.unpack("<H", d[p+27:p+29])[0]
+        pit_stop_timer = struct.unpack("<H", d[p+29:p+31])[0]
+        pit_serve_penalty = bool(d[p+31])
 
         return LapData(
             last_lap_time_ms=last_lap_ms,
@@ -303,11 +318,13 @@ def parse_car_status(data: bytes, car_index: int) -> Optional[CarStatus]:
         tyre_visual = d[26]
         tyre_age = d[27]
         flag = d[28]
-        ers = struct.unpack("<f", d[29:33])[0]
-        ers_mode = d[33]
-        ers_mguk = struct.unpack("<f", d[34:38])[0]
-        ers_mguh = struct.unpack("<f", d[38:42])[0]
-        ers_deployed = struct.unpack("<f", d[42:46])[0]
+        engine_ice = struct.unpack("<f", d[29:33])[0]
+        engine_mguk = struct.unpack("<f", d[33:37])[0]
+        ers = struct.unpack("<f", d[37:41])[0]
+        ers_mode = d[41]
+        ers_mguk_h = struct.unpack("<f", d[42:46])[0]
+        ers_mguh_h = struct.unpack("<f", d[46:50])[0]
+        ers_deployed = struct.unpack("<f", d[50:54])[0]
 
         return CarStatus(
             traction_control=tc,
@@ -327,12 +344,12 @@ def parse_car_status(data: bytes, car_index: int) -> Optional[CarStatus]:
             visual_tyre_compound=tyre_visual,
             tyre_age_laps=tyre_age,
             vehicle_flag=VehicleFlag(flag) if flag <= 4 else flag,
-            engine_power_ice=0,
-            engine_power_mguk=0,
+            engine_power_ice=engine_ice,
+            engine_power_mguk=engine_mguk,
             ers_store_energy=ers,
             ers_deploy_mode=ERSMode(ers_mode) if ers_mode <= 3 else ers_mode,
-            ers_harvested_this_lap_mguk=ers_mguk,
-            ers_harvested_this_lap_mguh=ers_mguh,
+            ers_harvested_this_lap_mguk=ers_mguk_h,
+            ers_harvested_this_lap_mguh=ers_mguh_h,
             ers_deployed_this_lap=ers_deployed,
             network_paused=False,
         )

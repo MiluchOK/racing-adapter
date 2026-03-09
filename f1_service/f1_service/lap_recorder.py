@@ -1,20 +1,31 @@
 """Lap Recorder - records per-lap telemetry to compact .f1lap binary files."""
 
+import logging
 import struct
 import time
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from f1_telemetry.packets import (
+logger = logging.getLogger("f1_service.lap_recorder")
+
+from .packets import (
     PacketType, Track, Weather, SessionType, Team, TyreCompound,
 )
 
 # Binary format constants
 MAGIC = b"F1LP"
-FORMAT_VERSION = 1
-HEADER_STRUCT = struct.Struct("<4s B B B B B B B B B Q I H H H 48s I")
+FORMAT_VERSION = 2
+
+# V1 header (84 bytes) — kept for reader backward compat
+HEADER_V1_STRUCT = struct.Struct("<4s B B B B B B B B B Q I H H H 48s I")
+HEADER_V1_SIZE = HEADER_V1_STRUCT.size
+
+# V2 header adds 10 assist bytes after num_samples (94 bytes)
+# Assists: steering_assist, braking_assist, gearbox_assist, pit_assist,
+#          pit_release_assist, ers_assist, drs_assist, dynamic_racing_line,
+#          traction_control, anti_lock_brakes
+HEADER_STRUCT = struct.Struct("<4s B B B B B B B B B Q I H H H 48s I 10B")
 HEADER_SIZE = HEADER_STRUCT.size
 
 # Per-sample struct: 4 + 58 + 31 + 48 + 188 + 33 + 40 = 402 bytes
@@ -75,45 +86,26 @@ SAMPLE_STRUCT = struct.Struct(
 )
 SAMPLE_SIZE = SAMPLE_STRUCT.size
 
+FLUSH_INTERVAL = 5.0  # seconds between flushes
+
 
 def _tyre4(td):
     """Extract (RL, RR, FL, FR) tuple from a TyreData object."""
     return (td.rear_left, td.rear_right, td.front_left, td.front_right)
 
 
-def _track_slug(track) -> str:
-    """Short filesystem-safe track name."""
-    if isinstance(track, Track):
-        return track.name.lower()
-    return str(track)
-
-
-def _session_slug(session_type) -> str:
-    """Short filesystem-safe session type name."""
-    if isinstance(session_type, SessionType):
-        return session_type.name.lower()
-    return str(session_type)
-
-
-@dataclass
-class _CachedLap:
-    """Accumulated samples for one lap."""
-    lap_number: int = 0
-    samples: list = field(default_factory=list)
-    lap_valid: bool = True
-
-
 class LapRecorder:
     """Records per-lap telemetry to .f1lap binary files.
 
-    Uses the same register(dispatcher) pattern as LapReporter.
-    CAR_TELEMETRY is the trigger (~20 Hz); lower-frequency packets carry
-    their most recent cached values.
+    Files are written directly to the laps directory (no sub-folders).
+    Filename: <timestamp>_lap<N>.f1lap
+
+    Streams samples to disk as they arrive. Flushes every 5 seconds.
+    The header (with sample count and lap time) is rewritten when the lap ends.
     """
 
     def __init__(self, laps_dir: str = "laps"):
         self._base_dir = Path(laps_dir)
-        self._session_dir: Optional[Path] = None
 
         # Session-level metadata (from SESSION / PARTICIPANTS packets)
         self._game_year: int = 0
@@ -125,6 +117,18 @@ class LapRecorder:
         self._team: int = 0
         self._tyre_compound: int = 0
 
+        # Assist flags (from SESSION + CAR_STATUS packets)
+        self._steering_assist: int = 0
+        self._braking_assist: int = 0
+        self._gearbox_assist: int = 0
+        self._pit_assist: int = 0
+        self._pit_release_assist: int = 0
+        self._ers_assist: int = 0
+        self._drs_assist: int = 0
+        self._dynamic_racing_line: int = 0
+        self._traction_control: int = 0
+        self._anti_lock_brakes: int = 0
+
         # Per-lap sector cache from SESSION_HISTORY {lap_num: (s1, s2, s3)}
         self._lap_sectors: dict[int, tuple[int, int, int]] = {}
 
@@ -135,9 +139,15 @@ class LapRecorder:
         self._car_status = None
         self._car_damage = None
 
-        # Current lap accumulator
-        self._current_lap = _CachedLap()
+        # Current lap streaming state
+        self._lap_number: int = 0
+        self._lap_valid: bool = True
+        self._lap_file = None
+        self._lap_filepath: Optional[Path] = None
+        self._sample_count: int = 0
         self._recording = False
+        self._session_ts: str = ""  # timestamp for filenames in this session
+        self._last_flush: float = 0.0
 
     def register(self, dispatcher):
         """Register handlers on an F1Dispatcher instance."""
@@ -160,6 +170,15 @@ class LapRecorder:
         self._session_type = data.session_type
         self._game_year = header.game_year
         self._session_uid = header.session_uid
+        # Cache assist flags from session data
+        self._steering_assist = int(data.steering_assist)
+        self._braking_assist = data.braking_assist
+        self._gearbox_assist = data.gearbox_assist
+        self._pit_assist = int(data.pit_assist)
+        self._pit_release_assist = int(data.pit_release_assist)
+        self._ers_assist = int(data.ers_assist)
+        self._drs_assist = int(data.drs_assist)
+        self._dynamic_racing_line = data.dynamic_racing_line
 
     def _handle_participants(self, header, data):
         self._driver_name = data.name
@@ -172,6 +191,8 @@ class LapRecorder:
             if isinstance(data.actual_tyre_compound, TyreCompound)
             else data.actual_tyre_compound
         )
+        self._traction_control = data.traction_control
+        self._anti_lock_brakes = int(data.anti_lock_brakes)
 
     def _handle_car_damage(self, header, data):
         self._car_damage = data
@@ -194,25 +215,31 @@ class LapRecorder:
                 )
 
     def _handle_lap_data(self, header, data):
-        prev_lap_num = self._current_lap.lap_number
+        prev_lap_num = self._lap_number
 
         # Detect lap boundary
-        if data.current_lap != prev_lap_num and prev_lap_num > 0 and self._recording:
-            self._flush_lap()
+        if data.current_lap != prev_lap_num and prev_lap_num > 0:
+            self._finalize_lap()
 
-        self._current_lap.lap_number = data.current_lap
+        self._lap_number = data.current_lap
         if data.current_lap_invalid:
-            self._current_lap.lap_valid = False
+            self._lap_valid = False
         self._lap_data = data
 
     def _handle_car_telemetry(self, header, data):
-        """Trigger: append a sample using latest cached values from all packet types."""
-        if not self._recording:
-            return
+        """Trigger: pack and stream one sample to disk."""
+        self._ensure_recording()
+        self._ensure_lap_file()
 
         sample = self._pack_sample(header.session_time, data)
-        if sample:
-            self._current_lap.samples.append(sample)
+        if sample and self._lap_file:
+            self._lap_file.write(sample)
+            self._sample_count += 1
+
+            now = time.monotonic()
+            if now - self._last_flush >= FLUSH_INTERVAL:
+                self._lap_file.flush()
+                self._last_flush = now
 
     def _handle_event(self, header, data):
         if data.event_code == "SSTA":
@@ -222,46 +249,81 @@ class LapRecorder:
 
     # ── session lifecycle ────────────────────────────────────────────
 
-    def _start_session(self):
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        track = _track_slug(self._track) if self._track is not None else "unknown"
-        stype = _session_slug(self._session_type) if self._session_type is not None else "unknown"
-        self._session_dir = self._base_dir / f"{ts}_{track}_{stype}"
-        self._session_dir.mkdir(parents=True, exist_ok=True)
+    def _ensure_recording(self):
+        """Start recording lazily on first telemetry packet."""
+        if self._recording:
+            return
+        self._start_session()
 
-        self._current_lap = _CachedLap()
+    def _start_session(self):
+        # Finalize any in-progress lap from a previous session
+        self._finalize_lap()
+
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+        self._session_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._lap_sectors.clear()
         self._recording = True
-        print(f"[LapRecorder] Session started — recording to {self._session_dir}")
+        print(f"[LapRecorder] Recording to {self._base_dir}/")
 
     def _end_session(self):
-        if self._recording and self._current_lap.samples:
-            self._flush_lap()
+        self._finalize_lap()
         self._recording = False
         print("[LapRecorder] Session ended")
 
-    # ── flush / write ────────────────────────────────────────────────
+    def close(self):
+        """Finalize any in-progress lap file (call on shutdown)."""
+        self._finalize_lap()
 
-    def _flush_lap(self):
-        """Write accumulated samples for the completed lap to a .f1lap file."""
-        lap = self._current_lap
-        if not lap.samples or self._session_dir is None:
-            self._current_lap = _CachedLap()
+    # ── per-lap file streaming ───────────────────────────────────────
+
+    def _ensure_lap_file(self):
+        """Open a new lap file if one isn't open yet."""
+        if self._lap_file is not None:
             return
 
-        lap_num = lap.lap_number
+        lap_num = self._lap_number if self._lap_number > 0 else 1
+        self._lap_filepath = self._base_dir / f"{self._session_ts}_lap{lap_num:03d}.f1lap"
+
+        # Write a placeholder header — will be rewritten in _finalize_lap
+        self._lap_file = open(self._lap_filepath, "wb")
+        self._lap_file.write(self._pack_header(lap_num, 0, (0, 0, 0)))
+        self._lap_file.flush()
+        self._last_flush = time.monotonic()
+        self._sample_count = 0
+        self._lap_valid = True
+
+    def _finalize_lap(self):
+        """Close the current lap file and rewrite the header with final metadata."""
+        if self._lap_file is None:
+            return
+
+        self._lap_file.close()
+
+        lap_num = self._lap_number if self._lap_number > 0 else 1
         sectors = self._lap_sectors.get(lap_num, (0, 0, 0))
 
-        # Compute lap time from sectors (if available) or from last_lap_time_ms
+        # Compute lap time
         lap_time_ms = 0
         if all(s > 0 for s in sectors):
             lap_time_ms = sum(sectors)
         elif self._lap_data and self._lap_data.last_lap_time_ms > 0:
             lap_time_ms = self._lap_data.last_lap_time_ms
 
-        driver_bytes = self._driver_name.encode("utf-8")[:48].ljust(48, b"\x00")
+        # Rewrite the header in place with final sample count, lap time, sectors
+        with open(self._lap_filepath, "r+b") as f:
+            f.write(self._pack_header(lap_num, lap_time_ms, sectors))
 
-        header_data = HEADER_STRUCT.pack(
+        size_kb = (HEADER_SIZE + self._sample_count * SAMPLE_SIZE) / 1024
+        print(f"[LapRecorder] Lap {lap_num} done ({self._sample_count} samples, {size_kb:.0f} KB) → {self._lap_filepath.name}")
+
+        self._lap_file = None
+        self._lap_filepath = None
+        self._sample_count = 0
+
+    def _pack_header(self, lap_num: int, lap_time_ms: int, sectors: tuple) -> bytes:
+        """Pack the .f1lap file header."""
+        driver_bytes = self._driver_name.encode("utf-8")[:48].ljust(48, b"\x00")
+        return HEADER_STRUCT.pack(
             MAGIC,
             FORMAT_VERSION,
             self._game_year,
@@ -269,7 +331,7 @@ class LapRecorder:
             int(self._session_type) if self._session_type is not None else 0,
             int(self._weather) if self._weather is not None else 0,
             lap_num,
-            1 if lap.lap_valid else 0,
+            1 if self._lap_valid else 0,
             self._team,
             self._tyre_compound,
             self._session_uid,
@@ -278,19 +340,19 @@ class LapRecorder:
             sectors[1],
             sectors[2],
             driver_bytes,
-            len(lap.samples),
+            self._sample_count,
+            # V2 assist flags
+            self._steering_assist,
+            self._braking_assist,
+            self._gearbox_assist,
+            self._pit_assist,
+            self._pit_release_assist,
+            self._ers_assist,
+            self._drs_assist,
+            self._dynamic_racing_line,
+            self._traction_control,
+            self._anti_lock_brakes,
         )
-
-        filename = self._session_dir / f"lap_{lap_num:02d}.f1lap"
-        with open(filename, "wb") as f:
-            f.write(header_data)
-            for sample in lap.samples:
-                f.write(sample)
-
-        size_kb = (HEADER_SIZE + len(lap.samples) * SAMPLE_SIZE) / 1024
-        print(f"[LapRecorder] Saved lap {lap_num} ({len(lap.samples)} samples, {size_kb:.0f} KB) → {filename.name}")
-
-        self._current_lap = _CachedLap()
 
     # ── sample packing ───────────────────────────────────────────────
 
@@ -409,5 +471,6 @@ class LapRecorder:
                 cd.engine_mguk_wear if cd else 0,
                 cd.engine_tc_wear if cd else 0,
             )
-        except (struct.error, TypeError, AttributeError) as e:
+        except (struct.error, TypeError, AttributeError):
+            logger.error("Failed to pack sample at session_time=%.3f", session_time, exc_info=True)
             return None

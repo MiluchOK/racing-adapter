@@ -5,3 +5,6 @@ __pycache__/
 .env
 .DS_Store
 arduino_secrets.h
+captures/
+laps/
+rc-firmware/.pio/

@@ -5,7 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .lap_recorder import MAGIC, HEADER_STRUCT, HEADER_SIZE, SAMPLE_STRUCT, SAMPLE_SIZE
+from .lap_recorder import (
+    MAGIC, HEADER_STRUCT, HEADER_SIZE, HEADER_V1_STRUCT, HEADER_V1_SIZE,
+    SAMPLE_STRUCT, SAMPLE_SIZE,
+)
 
 
 @dataclass
@@ -128,6 +131,17 @@ class LapHeader:
     sector3_ms: int
     driver_name: str
     num_samples: int
+    # V2 assist flags (None for v1 files)
+    steering_assist: Optional[int] = None
+    braking_assist: Optional[int] = None
+    gearbox_assist: Optional[int] = None
+    pit_assist: Optional[int] = None
+    pit_release_assist: Optional[int] = None
+    ers_assist: Optional[int] = None
+    drs_assist: Optional[int] = None
+    dynamic_racing_line: Optional[int] = None
+    traction_control: Optional[int] = None
+    anti_lock_brakes: Optional[int] = None
 
 
 @dataclass
@@ -149,7 +163,6 @@ class LapSummary:
     driver_name: str
     num_samples: int
     lap_valid: bool
-    session_dir: str
 
 
 def _unpack_sample(raw: bytes) -> LapSample:
@@ -315,34 +328,29 @@ def _unpack_sample(raw: bytes) -> LapSample:
     )
 
 
+def _header_size_for_version(version: int) -> int:
+    """Return header byte size for a given format version."""
+    return HEADER_V1_SIZE if version <= 1 else HEADER_SIZE
+
+
 def _read_header(raw: bytes) -> LapHeader:
-    """Decode the 84-byte file header."""
-    vals = HEADER_STRUCT.unpack(raw)
-    # vals layout:
-    # 0: magic (4s)
-    # 1: version (B)
-    # 2: game_year (B)
-    # 3: track_id (B)
-    # 4: session_type (B)
-    # 5: weather (B)
-    # 6: lap_number (B)
-    # 7: lap_valid (B)
-    # 8: team_id (B)
-    # 9: tyre_compound (B)
-    # 10: session_uid (Q)
-    # 11: lap_time_ms (I)
-    # 12: sector1_ms (H)
-    # 13: sector2_ms (H)
-    # 14: sector3_ms (H)
-    # 15: driver_name (48s)
-    # 16: num_samples (I)
-    magic = vals[0]
+    """Decode a file header (v1=84 bytes, v2=94 bytes)."""
+    # Peek at version byte (offset 4) to decide struct
+    if len(raw) < 5:
+        raise ValueError(f"Header too short ({len(raw)} bytes)")
+    magic = raw[:4]
     if magic != MAGIC:
         raise ValueError(f"Invalid magic: {magic!r} (expected {MAGIC!r})")
+    version = raw[4]
+
+    if version <= 1:
+        vals = HEADER_V1_STRUCT.unpack(raw[:HEADER_V1_SIZE])
+    else:
+        vals = HEADER_STRUCT.unpack(raw[:HEADER_SIZE])
 
     driver_name = vals[15].split(b"\x00")[0].decode("utf-8", errors="replace")
 
-    return LapHeader(
+    header = LapHeader(
         version=vals[1],
         game_year=vals[2],
         track_id=vals[3],
@@ -361,6 +369,20 @@ def _read_header(raw: bytes) -> LapHeader:
         num_samples=vals[16],
     )
 
+    if version >= 2:
+        header.steering_assist = vals[17]
+        header.braking_assist = vals[18]
+        header.gearbox_assist = vals[19]
+        header.pit_assist = vals[20]
+        header.pit_release_assist = vals[21]
+        header.ers_assist = vals[22]
+        header.drs_assist = vals[23]
+        header.dynamic_racing_line = vals[24]
+        header.traction_control = vals[25]
+        header.anti_lock_brakes = vals[26]
+
+    return header
+
 
 def read_lap(path) -> LapFile:
     """Decode a .f1lap file into a LapFile with header + samples.
@@ -374,13 +396,14 @@ def read_lap(path) -> LapFile:
     path = Path(path)
     data = path.read_bytes()
 
-    if len(data) < HEADER_SIZE:
-        raise ValueError(f"File too small ({len(data)} bytes, need at least {HEADER_SIZE})")
+    if len(data) < HEADER_V1_SIZE:
+        raise ValueError(f"File too small ({len(data)} bytes, need at least {HEADER_V1_SIZE})")
 
-    header = _read_header(data[:HEADER_SIZE])
+    header = _read_header(data)
+    hdr_size = _header_size_for_version(header.version)
 
     samples = []
-    offset = HEADER_SIZE
+    offset = hdr_size
     for _ in range(header.num_samples):
         if offset + SAMPLE_SIZE > len(data):
             break
@@ -405,12 +428,12 @@ def list_laps(directory="laps") -> list[LapSummary]:
         return []
 
     summaries = []
-    for f1lap in sorted(root.rglob("*.f1lap")):
+    for f1lap in sorted(root.glob("*.f1lap")):
         try:
             raw = f1lap.read_bytes()
-            if len(raw) < HEADER_SIZE:
+            if len(raw) < HEADER_V1_SIZE:
                 continue
-            hdr = _read_header(raw[:HEADER_SIZE])
+            hdr = _read_header(raw)
             summaries.append(LapSummary(
                 path=f1lap,
                 lap_number=hdr.lap_number,
@@ -420,7 +443,6 @@ def list_laps(directory="laps") -> list[LapSummary]:
                 driver_name=hdr.driver_name,
                 num_samples=hdr.num_samples,
                 lap_valid=hdr.lap_valid,
-                session_dir=f1lap.parent.name,
             ))
         except (ValueError, OSError):
             continue

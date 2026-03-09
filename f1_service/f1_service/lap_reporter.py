@@ -9,7 +9,7 @@ from urllib.error import URLError, HTTPError
 
 from dotenv import load_dotenv
 
-from f1_telemetry.packets import PacketType, Weather, Track, Team, SessionType
+from .packets import PacketType, Weather, Track, Team, SessionType
 
 load_dotenv()
 
